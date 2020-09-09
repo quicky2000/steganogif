@@ -69,6 +69,15 @@ namespace steganogif
         void
         extend_palette(lib_bmp::my_bmp & p_bmp);
 
+        /**
+         * Compute correspondancy between reference color and coding color
+         * @param p_colors list of colors
+         * @return correspondancy table
+         */
+        inline static
+        std::map<lib_bmp::my_color, lib_bmp::my_color>
+        compute_color_correspondance(const std::set<lib_bmp::my_color> & p_colors);
+
         inline
         std::map<lib_bmp::my_color, lib_bmp::my_color>
         compute_simplified_colors( const lib_bmp::my_bmp & p_bmp);
@@ -156,54 +165,31 @@ namespace steganogif
         }
 
         // Check there are no duplicated colors in palette
-        std::map<lib_bmp::my_color, unsigned int> l_colors;
-        for(unsigned int l_index = 0; l_index < l_work_bmp->get_palette().get_size(); ++l_index)
+        std::set<lib_bmp::my_color> l_colors;
         {
-            //std::cout << l_bmp_256.get_palette().get_color(l_index) << std::endl;
-            if(l_colors.count(l_work_bmp->get_palette().get_color(l_index)))
+            std::map<lib_bmp::my_color, unsigned int> l_colors_index;
+            for (unsigned int l_index = 0; l_index < l_work_bmp->get_palette().get_size(); ++l_index)
             {
-                std::stringstream l_color_stream;
-                l_color_stream << l_work_bmp->get_palette().get_color(l_index);
-                throw quicky_exception::quicky_logic_exception("Color duplicated at index " + std::to_string(l_index) + " / " + std::to_string(l_colors.find(l_work_bmp->get_palette().get_color(l_index))->second) + " : " + l_color_stream.str(), __LINE__, __FILE__);
+                //std::cout << l_bmp_256.get_palette().get_color(l_index) << std::endl;
+                if (l_colors_index.count(l_work_bmp->get_palette().get_color(l_index)))
+                {
+                    std::stringstream l_color_stream;
+                    l_color_stream << l_work_bmp->get_palette().get_color(l_index);
+                    throw quicky_exception::quicky_logic_exception( "Color duplicated at index " + std::to_string(l_index) + " / " + std::to_string(l_colors_index.find(l_work_bmp->get_palette().get_color(l_index))->second) + " : " + l_color_stream.str(), __LINE__, __FILE__);
+                }
+                l_colors_index.insert(std::make_pair(l_work_bmp->get_palette().get_color(l_index), l_index));
+                l_colors.insert(l_work_bmp->get_palette().get_color(l_index));
             }
-            l_colors.insert(std::make_pair(l_work_bmp->get_palette().get_color(l_index), l_index));
         }
 
         std::cout << "Result : " << l_colors.size() << std::endl;
 
-//#if 0
-        while(l_colors.size())
-        {
-            std::cout << l_colors.size() << std::endl;
-            float l_min = std::numeric_limits<float>::max();
-            lib_bmp::my_color l_lower_color;
-            lib_bmp::my_color l_upper_color;
-            for(auto l_iter: l_colors)
-            {
-                auto l_search_min = [=, &l_min, &l_lower_color, &l_upper_color](const auto p_color)
-                {
-                    if (p_color != l_iter)
-                    {
-                        float l_dist = dist(p_color.first, l_iter.first);
-                        if (l_dist < l_min)
-                        {
-                            l_min = l_dist;
-                            l_lower_color = p_color.first;
-                            l_upper_color = l_iter.first;
-                        }
-                    }
-                };
-                std::for_each(l_colors.begin(), l_colors.end(), l_search_min);
-            }
-            std::cout << l_upper_color << " <==> " << l_lower_color << " : " << l_min << std::endl;
-            l_colors.erase(l_upper_color);
-            l_colors.erase(l_lower_color);
-        }
+        std::map<lib_bmp::my_color, lib_bmp::my_color> l_color_correspondance = compute_color_correspondance(l_colors);
+
         for(unsigned int l_index = 0; l_index < 10; ++l_index)
         {
             std::cout << l_generator() << std::endl;
         }
-//#endif // 0
         if(l_work_bmp != &l_bmp)
         {
             delete l_work_bmp;
@@ -474,6 +460,48 @@ namespace steganogif
 #endif // VERBOSE_STEGANOGIF
             p_bmp.get_palette().set_color(l_original_color, l_index);
         }
+    }
+
+    //-------------------------------------------------------------------------
+    std::map<lib_bmp::my_color, lib_bmp::my_color>
+    steganogif::compute_color_correspondance(const std::set<lib_bmp::my_color> & p_colors)
+    {
+        if(p_colors.size() % 2)
+        {
+            throw quicky_exception::quicky_logic_exception("Number of color should be even : " + std::to_string(p_colors.size()), __LINE__, __FILE__);
+        }
+        std::set<lib_bmp::my_color> l_colors{p_colors};
+        std::map<lib_bmp::my_color, lib_bmp::my_color> l_color_correspondance;
+        while(l_colors.size())
+        {
+            std::cout << l_colors.size() << std::endl;
+            float l_min = std::numeric_limits<float>::max();
+            lib_bmp::my_color l_lower_color;
+            lib_bmp::my_color l_upper_color;
+            for(auto l_iter: l_colors)
+            {
+                auto l_search_min = [=, &l_min, &l_lower_color, &l_upper_color](const auto p_color)
+                {
+                    if (p_color != l_iter)
+                    {
+                        float l_dist = dist(p_color, l_iter);
+                        if (l_dist < l_min)
+                        {
+                            l_min = l_dist;
+                            l_lower_color = p_color;
+                            l_upper_color = l_iter;
+                        }
+                    }
+                };
+                std::for_each(l_colors.begin(), l_colors.end(), l_search_min);
+            }
+            std::cout << l_upper_color << " <==> " << l_lower_color << " : " << l_min << std::endl;
+            l_color_correspondance.insert(std::make_pair(l_lower_color, l_upper_color));
+            l_color_correspondance.insert(std::make_pair(l_upper_color, l_lower_color));
+            l_colors.erase(l_upper_color);
+            l_colors.erase(l_lower_color);
+        }
+        return l_color_correspondance;
     }
 
 }
