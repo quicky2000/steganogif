@@ -54,6 +54,21 @@ namespace steganogif
         lib_bmp::my_bmp
         compute_simplified_bmp(const lib_bmp::my_bmp & p_bmp);
 
+        /**
+         * Convert parameter BMP file to a BMP file with only 128 colors
+         * @param p_bmp BMP content to be converted
+         * @return converted BMP content
+         */
+        lib_bmp::my_bmp
+        compute_128_color_bmp(const lib_bmp::my_bmp & p_bmp);
+
+        /**
+         * Transform 128 color palette in 256 color palette
+         * @param p_bmp BMP content whose palette should be extended
+         */
+        void
+        extend_palette(lib_bmp::my_bmp & p_bmp);
+
         inline
         std::map<lib_bmp::my_color, lib_bmp::my_color>
         compute_simplified_colors( const lib_bmp::my_bmp & p_bmp);
@@ -134,48 +149,9 @@ namespace steganogif
 
         if(l_bmp.get_nb_bits_per_pixel() > 8)
         {
-            l_work_bmp = new lib_bmp::my_bmp(compute_simplified_bmp(l_bmp));
-            std::array<uint8_t, 4> l_red_components{0,64,128,255};
-            std::array<uint8_t, 8> l_green_components{0, 32, 64, 96, 128, 160, 192, 255};
-            unsigned int l_index = 0;
-            for(auto l_iter_red: l_red_components)
-            {
-                for(auto l_iter_green: l_green_components)
-                {
-                    for(auto l_iter_blue: l_red_components)
-                    {
-                        l_work_bmp->get_palette().set_color(lib_bmp::my_color_alpha(l_iter_red, l_iter_green, l_iter_blue), l_index);
-                        ++l_index;
-                    }
-                }
-            }
-            // obtain a seed from the system clock:
-            std::mt19937 l_color_generator{(unsigned int)std::chrono::system_clock::now().time_since_epoch().count()};
-            for(;l_index < 256; ++l_index)
-            {
-                unsigned int l_componant_index = l_color_generator() % 3;
-                lib_bmp::my_color_alpha l_original_color = l_work_bmp->get_palette().get_color(l_index - 128);
-                std::cout << "[" << l_index << "] " << l_original_color << " => " ;
-                unsigned int l_componant = (0 ==l_componant_index ) ? l_original_color.get_red() : ((1 == l_componant_index) ? l_original_color.get_green() : l_original_color.get_blue());
-                unsigned int l_offset = (1 + (l_color_generator() % 14));
-                l_componant = l_componant != 255 ? l_componant + l_offset : l_componant - l_offset;
-                switch (l_componant_index)
-                {
-                    case 0:
-                        l_original_color.set_red(l_componant);
-                        break;
-                    case 1:
-                        l_original_color.set_green(l_componant);
-                        break;
-                    case 2:
-                        l_original_color.set_blue(l_componant);
-                        break;
-                    default:
-                        throw quicky_exception::quicky_logic_exception("Unknowm componant index : " + std::to_string(l_componant_index), __LINE__, __FILE__);
-                }
-                std::cout << l_original_color << std::endl ;
-                l_work_bmp->get_palette().set_color(l_original_color, l_index);
-            }
+            l_work_bmp = new lib_bmp::my_bmp(compute_128_color_bmp(l_bmp));
+
+            extend_palette(*l_work_bmp);
             l_work_bmp->save("simplified.bmp");
         }
 
@@ -401,6 +377,103 @@ namespace steganogif
         std::cout << "Number of translated colors : " << l_new_colors.size() << std::endl;
 
         return l_color_correspondance;
+    }
+
+    //-------------------------------------------------------------------------
+    lib_bmp::my_bmp
+    steganogif::compute_128_color_bmp(const lib_bmp::my_bmp & p_bmp)
+    {
+        {
+            // Copy BMP content
+            lib_bmp::my_bmp l_new_bmp(p_bmp.get_width(), p_bmp.get_height(), 8);
+            for (unsigned int l_y = 0; l_y < p_bmp.get_height(); ++l_y)
+            {
+                for (unsigned int l_x = 0; l_x < p_bmp.get_width(); ++l_x)
+                {
+                    l_new_bmp.set_pixel_color(l_x, l_y, p_bmp.get_pixel_color(l_x, l_y));
+                }
+            }
+
+            // Create 128 color palette
+            std::array<uint8_t, 4> l_red_components
+            { 0
+            , 64
+            , 128
+            , 255
+            };
+
+            std::array<uint8_t, 8> l_green_components
+            { 0
+            , 32
+            , 64
+            , 96
+            , 128
+            , 160
+            , 192
+            , 255
+            };
+
+            unsigned int l_index = 0;
+            for (auto l_iter_red: l_red_components)
+            {
+                for (auto l_iter_green: l_green_components)
+                {
+                    for (auto l_iter_blue: l_red_components)
+                    {
+                        l_new_bmp.get_palette().set_color(lib_bmp::my_color_alpha(l_iter_red, l_iter_green, l_iter_blue), l_index);
+                        ++l_index;
+                    }
+                }
+            }
+            assert(128 == l_index);
+            while (l_index < 256)
+            {
+                l_new_bmp.get_palette().set_color(lib_bmp::my_color_alpha(0,0,0), l_index);
+                ++l_index;
+            }
+
+            l_new_bmp.save("128_color.bmp");
+        }
+        lib_bmp::my_bmp l_new_bmp{"128_color.bmp"};
+        return l_new_bmp;
+    }
+
+    //-------------------------------------------------------------------------
+    void
+    steganogif::extend_palette(lib_bmp::my_bmp & p_bmp)
+    {
+        // obtain a seed from the system clock:
+        std::mt19937 l_color_generator{(unsigned int)std::chrono::system_clock::now().time_since_epoch().count()};
+        for(unsigned int l_index = 128;l_index < 256; ++l_index)
+        {
+            unsigned int l_componant_index = l_color_generator() % 3;
+            assert(lib_bmp::my_color_alpha(0,0,0) == p_bmp.get_palette().get_color(l_index));
+            lib_bmp::my_color_alpha l_original_color = p_bmp.get_palette().get_color(l_index - 128);
+#ifdef VERBOSE_STEGANOGIF
+            std::cout << "[" << l_index << "] " << l_original_color << " => " ;
+#endif // VERBOSE_STEGANOGIF
+            unsigned int l_componant = (0 ==l_componant_index ) ? l_original_color.get_red() : ((1 == l_componant_index) ? l_original_color.get_green() : l_original_color.get_blue());
+            unsigned int l_offset = (1 + (l_color_generator() % 14));
+            l_componant = l_componant != 255 ? l_componant + l_offset : l_componant - l_offset;
+            switch (l_componant_index)
+            {
+                case 0:
+                    l_original_color.set_red(l_componant);
+                    break;
+                case 1:
+                    l_original_color.set_green(l_componant);
+                    break;
+                case 2:
+                    l_original_color.set_blue(l_componant);
+                    break;
+                default:
+                    throw quicky_exception::quicky_logic_exception("Unknowm componant index : " + std::to_string(l_componant_index), __LINE__, __FILE__);
+            }
+#ifdef VERBOSE_STEGANOGIF
+            std::cout << l_original_color << std::endl ;
+#endif // VERBOSE_STEGANOGIF
+            p_bmp.get_palette().set_color(l_original_color, l_index);
+        }
     }
 
 }
