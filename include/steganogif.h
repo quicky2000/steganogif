@@ -78,6 +78,50 @@ namespace steganogif
         std::map<lib_bmp::my_color, lib_bmp::my_color>
         compute_color_correspondance(const std::set<lib_bmp::my_color> & p_colors);
 
+        /**
+         * Encode data in a pixel information
+         * @param p_x pixel coordinate on X axis
+         * @param p_y pixel coordinate on Y axis
+         * @param p_data bit to encode
+         * @param p_swap indicate if swap should be apply between reference and coding color
+         * @param p_color_correspondance color correspondance
+         * @param p_bmp BMP content where data is encoded
+         */
+        inline
+        void
+        encode_pixel( unsigned int p_x
+                    , unsigned int p_y
+                    , bool p_data
+                    , bool p_swap
+                    , const std::map<lib_bmp::my_color, lib_bmp::my_color> & p_color_correspondance
+                    , lib_bmp::my_bmp & p_bmp
+                    );
+
+        /**
+         * Retrieve data encoded in pixel information
+         * @param p_x pixel coordinate on X axis
+         * @param p_y pixel coordinate on Y axis
+         * @param p_swap indicate if swap should be apply between reference and coding color
+         * @param p_color_correspondance color correspondance
+         * @param p_bmp BMP content where data is encoded
+         * @return encoded data
+         */
+        inline
+        bool
+        decode_pixel( unsigned int p_x
+                    , unsigned int p_y
+                    , bool p_swap
+                    , const std::map<lib_bmp::my_color, lib_bmp::my_color> & p_color_correspondance
+                    , lib_bmp::my_bmp & p_bmp
+                    );
+
+        /**
+         * Generate list of pixels coordinate
+         * @return list of pixels coordinate
+         */
+        inline static
+        std::vector<std::pair<unsigned int, unsigned int>> generate_pixel_list(const lib_bmp::my_bmp & );
+
         inline
         std::map<lib_bmp::my_color, lib_bmp::my_color>
         compute_simplified_colors( const lib_bmp::my_bmp & p_bmp);
@@ -149,8 +193,6 @@ namespace steganogif
     void
     steganogif::encode()
     {
-        std::mt19937 l_generator{*m_seed};
-
         // BMP file
         lib_bmp::my_bmp l_bmp("/media/data/Programmation/C++/Git_repositories/steganogif/test/20160729_095841.bmp");
 
@@ -186,6 +228,10 @@ namespace steganogif
 
         std::map<lib_bmp::my_color, lib_bmp::my_color> l_color_correspondance = compute_color_correspondance(l_colors);
 
+
+        std::vector<std::pair<unsigned int, unsigned int>> l_pixels = generate_pixel_list(l_bmp);
+
+        std::mt19937 l_generator{*m_seed};
         for(unsigned int l_index = 0; l_index < 10; ++l_index)
         {
             std::cout << l_generator() << std::endl;
@@ -502,6 +548,67 @@ namespace steganogif
             l_colors.erase(l_lower_color);
         }
         return l_color_correspondance;
+    }
+
+    //-------------------------------------------------------------------------
+    void
+    steganogif::encode_pixel( unsigned int p_x
+                            , unsigned int p_y
+                            , bool p_data
+                            , bool p_swap
+                            , const std::map<lib_bmp::my_color, lib_bmp::my_color> & p_color_correspondance
+                            , lib_bmp::my_bmp & p_bmp
+                            )
+    {
+        lib_bmp::my_color l_origin_color = p_bmp.get_pixel_color(p_x, p_y);
+        auto l_iter = p_color_correspondance.find(l_origin_color);
+        assert(l_iter != p_color_correspondance.end());
+        lib_bmp::my_color l_related_color = l_iter->second;
+        if(l_origin_color > l_related_color)
+        {
+            std::swap(l_origin_color, l_related_color);
+        }
+        if(p_data ^ p_swap)
+        {
+            p_bmp.set_pixel_color(p_x, p_y, lib_bmp::my_color_alpha(l_related_color));
+        }
+        else
+        {
+            p_bmp.set_pixel_color(p_x, p_y, lib_bmp::my_color_alpha(l_origin_color));
+        }
+    }
+
+    //-------------------------------------------------------------------------
+    bool
+    steganogif::decode_pixel( unsigned int p_x
+                            , unsigned int p_y
+                            , bool p_swap
+                            , const std::map<lib_bmp::my_color, lib_bmp::my_color> & p_color_correspondance
+                            , lib_bmp::my_bmp & p_bmp
+                            )
+    {
+        const lib_bmp::my_color & l_pixel_color = p_bmp.get_pixel_color(p_x, p_y);
+        auto l_iter = p_color_correspondance.find(l_pixel_color);
+        assert(l_iter != p_color_correspondance.end());
+        lib_bmp::my_color l_related_color = l_iter->second;
+        bool l_data = l_related_color < l_pixel_color;
+        l_data = l_data ^ p_swap;
+        return l_data;
+    }
+
+    //-------------------------------------------------------------------------
+    std::vector<std::pair<unsigned int, unsigned int>>
+    steganogif::generate_pixel_list(const lib_bmp::my_bmp & p_bmp)
+    {
+        std::vector<std::pair<unsigned int, unsigned int>> l_pixels;
+        for(unsigned int l_y = 0; l_y < p_bmp.get_height(); ++l_y)
+        {
+            for(unsigned int l_x = 0; l_x < p_bmp.get_width(); ++l_x)
+            {
+                l_pixels.emplace_back(std::make_pair(l_x, l_y));
+            }
+        }
+        return l_pixels;
     }
 
 }
