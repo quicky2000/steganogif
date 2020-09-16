@@ -59,6 +59,7 @@ namespace steganogif
          * @param p_bmp BMP content to be converted
          * @return converted BMP content
          */
+        inline
         lib_bmp::my_bmp
         compute_128_color_bmp(const lib_bmp::my_bmp & p_bmp);
 
@@ -66,6 +67,7 @@ namespace steganogif
          * Transform 128 color palette in 256 color palette
          * @param p_bmp BMP content whose palette should be extended
          */
+        inline
         void
         extend_palette(lib_bmp::my_bmp & p_bmp);
 
