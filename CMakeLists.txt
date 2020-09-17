@@ -5,8 +5,14 @@ set(CMAKE_VERBOSE_MAKEFILE OFF)
 set(CMAKE_CXX_STANDARD 17)
 
 set(MY_SOURCE_FILES
+    include/countable_item.h
+    include/splittable.h
+    include/splittable_list.h
+    include/splitted_list.h
     include/steganogif.h
-    include/yuv_color.h include/countable_item.h include/splittable.h include/splittable_list.h include/splitted_list.h)
+    include/yuv_color.h
+    include/stegano_header.h
+    )
 
 
 # List header directories in project
