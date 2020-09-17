@@ -28,8 +28,10 @@ int main()
 
     steganogif::steganogif l_steganogif{l_password};
 
-    l_steganogif.encode();
-
+//    l_steganogif.encode("/media/data/Programmation/C++/Git_repositories/steganogif/test/20160729_095841.bmp", "/media/data/Programmation/C++/Git_repositories/steganogif/README.md");
+//    l_steganogif.decode("/media/data/Programmation/C++/Git_repositories/steganogif/test/20160729_095841.bmp", "/media/data/Programmation/C++/Git_repositories/steganogif/README.md");
+    l_steganogif.encode("/media/data/Programmation/C++/build/steganogif/cmake-build-debug/simplified.bmp", "/media/data/Programmation/C++/Git_repositories/steganogif/README.md");
+    l_steganogif.decode("", "output");
     return 0;
 }
 // EOF

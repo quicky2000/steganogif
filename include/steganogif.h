@@ -24,6 +24,7 @@
 #include "yuv_color.h"
 #include "splittable_list.h"
 #include "splitted_list.h"
+#include "stegano_header.h"
 #include <string>
 #include <chrono>
 #include <random>
@@ -33,6 +34,11 @@
 #include <cmath>
 #include <map>
 #include <sstream>
+#include <fstream>
+
+#if __has_include(<filesystem>)
+#include <filesystem>
+#endif // filesystem
 
 namespace steganogif
 {
@@ -46,7 +52,14 @@ namespace steganogif
         ~steganogif();
 
         inline
-        void encode();
+        void encode( const std::string & p_transport_file_name
+                   , const std::string & p_content_file_name
+                   );
+
+        inline
+        void decode( const std::string & p_transport_file_name
+                   , const std::string & p_content_file_name
+                   );
 
       private:
 
@@ -211,15 +224,59 @@ namespace steganogif
 
     //-------------------------------------------------------------------------
     void
-    steganogif::encode()
+    steganogif::encode( const std::string & p_transport_file_name
+                      , const std::string & p_content_file_name
+                      )
     {
+        uint64_t l_content_size = 0;
+#if __has_include(<filesystem>)
+        l_content_size = std::filesystem::file_size(p_content_file_name);
+#else // __has_include(<filesystem>)
+        {
+            std::ifstream l_content_file;
+            l_content_file.open(p_content_file_name, std::ifstream::binary);
+            if (l_content_file.is_open())
+            {
+                // get length of file:
+                l_content_file.seekg(0, l_content_file.end);
+                l_content_size = l_content_file.tellg();
+                l_content_file.close();
+            }
+            else
+            {
+                throw quicky_exception::quicky_runtime_exception( R"(Unable to find file ")" + p_content_file_name + R"(")", __LINE__, __FILE__);
+            }
+        }
+#endif // __has_include(<filesystem>)
+
+        std::cout << "Content size : " << 8 * l_content_size << " bits" << std::endl;
+        stegano_header l_header(l_content_size);
+        std::vector<uint8_t> l_content{l_header.encode()};
+        uint64_t l_header_size = l_content.size();
+        l_content.resize(l_header_size + l_content_size + 20);
+        std::cout << "Header + content size : " << 8 * l_content.size() << " bits" << std::endl;
+
         // BMP file
-        lib_bmp::my_bmp l_bmp("/media/data/Programmation/C++/Git_repositories/steganogif/test/20160729_095841.bmp");
+        lib_bmp::my_bmp l_bmp(p_transport_file_name);
+        unsigned int l_bits_per_picture = l_bmp.get_height() * l_bmp.get_width();
+        if(l_bits_per_picture % 8)
+        {
+            throw quicky_exception::quicky_logic_exception("Number of pixels in picture should be a multiple of 8", __LINE__, __FILE__);
+        }
+
+        unsigned int l_frame_number = 8 * l_content.size() / l_bits_per_picture;
+        if(l_frame_number * l_bits_per_picture < 8 * l_content.size())
+        {
+            ++ l_frame_number;
+        }
+        std::cout << "Content size per picture : " << l_bits_per_picture << " bits" << std::endl;
+        std::cout << "Number of picture : " << l_frame_number << std::endl;
 
         lib_bmp::my_bmp * l_work_bmp = &l_bmp;
 
         if(l_bmp.get_nb_bits_per_pixel() > 8)
         {
+            std::cout << "Reduce number of colors" << std::endl;
             l_work_bmp = new lib_bmp::my_bmp(compute_128_color_bmp(l_bmp));
 
             extend_palette(*l_work_bmp);
@@ -244,22 +301,137 @@ namespace steganogif
             }
         }
 
-        std::cout << "Result : " << l_colors.size() << std::endl;
-
+        std::cout << "Compute color correspondances " << std::endl;
         std::map<lib_bmp::my_color, lib_bmp::my_color> l_color_correspondance = compute_color_correspondance(l_colors);
 
-
-        std::vector<std::pair<unsigned int, unsigned int>> l_pixels = generate_pixel_list(l_bmp);
-
-        std::mt19937 l_generator{*m_seed};
-        for(unsigned int l_index = 0; l_index < 10; ++l_index)
+        // Read file content
         {
-            std::cout << l_generator() << std::endl;
+            std::cout << "Read content to hide" << std::endl;
+            std::ifstream l_content_file;
+            l_content_file.open(p_content_file_name, std::ifstream::binary);
+            if (l_content_file.is_open())
+            {
+                l_content_file.read((char*)l_content.data() + l_header_size, l_content_size);
+                l_content_file.close();
+                std::cout << "Compute hash" << std::endl;
+                sha1 l_content_sha1(l_content.data() + l_header_size, l_content_size);
+                for(unsigned int l_index = 0; l_index < 5; ++l_index)
+                {
+                    auto * l_ptr = (uint32_t*)&l_content[l_content.size() - 5 * sizeof(uint32_t)+ l_index * sizeof(uint32_t)];
+                    * l_ptr = l_content_sha1.get_key(l_index);
+                }
+            } else
+            {
+                throw quicky_exception::quicky_runtime_exception( R"(Unable to find file ")" + p_content_file_name + R"(")", __LINE__, __FILE__);
+            }
         }
+
+        std::vector<std::pair<unsigned int, unsigned int>> l_pixels = generate_pixel_list(*l_work_bmp);
+        uint64_t l_offset = 0;
+        std::mt19937 l_generator{*m_seed};
+        for(unsigned int l_frame_index = 0; l_frame_index < l_frame_number; ++l_frame_index)
+        {
+            std::cout << "Encode picture " << l_frame_index << std::endl;
+            encode_picture(*l_work_bmp, l_content, l_pixels, l_color_correspondance, l_generator, l_offset);
+            l_work_bmp->save(std::to_string(l_frame_index) + ".bmp");
+            l_offset += l_bits_per_picture / 8;
+        }
+
         if(l_work_bmp != &l_bmp)
         {
             delete l_work_bmp;
         }
+    }
+
+    //-------------------------------------------------------------------------
+    void
+    steganogif::decode( const std::string & p_transport_file_name
+                      , const std::string & p_content_file_name
+                      )
+    {
+        lib_bmp::my_bmp l_bmp("0.bmp");
+        unsigned int l_bits_per_picture = l_bmp.get_height() * l_bmp.get_width();
+        if(l_bits_per_picture % 8)
+        {
+            throw quicky_exception::quicky_logic_exception("Number of pixels in picture should be a multiple of 8", __LINE__, __FILE__);
+        }
+
+        unsigned int l_frame_number = 2;
+        std::cout << "Content size per picture : " << l_bits_per_picture << " bits" << std::endl;
+        std::cout << "Number of picture : " << l_frame_number << std::endl;
+
+        // Get all colors duplicated colors in palette
+        std::set<lib_bmp::my_color> l_colors;
+        for (unsigned int l_index = 0; l_index < l_bmp.get_palette().get_size(); ++l_index)
+        {
+            l_colors.insert(l_bmp.get_palette().get_color(l_index));
+        }
+        if(l_colors.size() % 2)
+        {
+            throw quicky_exception::quicky_logic_exception("Number of color is not odd", __LINE__, __FILE__);
+        }
+        std::map<lib_bmp::my_color, lib_bmp::my_color> l_color_correspondance = compute_color_correspondance(l_colors);
+
+        std::vector<uint8_t> l_content;
+        std::mt19937 l_generator{*m_seed};
+        std::vector<std::pair<unsigned int, unsigned int>> l_pixels = generate_pixel_list(l_bmp);
+        std::cout << "Decode picture 0" << std::endl;
+        decode_picture(l_bmp, l_content, l_pixels, l_color_correspondance, l_generator);
+        unsigned int l_content_size = 0;
+        try
+        {
+            stegano_header l_header{l_content};
+            l_content_size = l_header.get_size();
+
+            if(l_frame_number * l_bits_per_picture < 8 * l_content.size())
+            {
+                unsigned int l_expected_frame_number = 8 * l_content_size / l_bits_per_picture + !!((8 * l_content_size) % l_bits_per_picture);
+                throw quicky_exception::quicky_logic_exception("Insufficant number of frame (" + std::to_string(l_frame_number) + " regarding number required ("+ std::to_string(l_expected_frame_number) +") according to declared content size", __LINE__, __FILE__);
+            }
+        }
+        catch(std::exception & e)
+        {
+            std::cout << "No content associated with this password" << std::endl;
+            return;
+        }
+
+        std::cout << "Content size : " << 8 * l_content_size << " bits" << std::endl;
+
+        // Decode other pictures if needed
+        for(unsigned int l_index = 1; l_index < l_frame_number; ++l_index)
+        {
+            std::cout << "Decode picture " << l_index << std::endl;
+            lib_bmp::my_bmp l_other_bmp(std::to_string(l_index) + ".bmp");
+            decode_picture(l_other_bmp, l_content, l_pixels, l_color_correspondance, l_generator);
+        }
+
+        // Check if content was retrieved
+        if(l_content.size() == l_content_size + 20)
+        {
+            std::cout << "No content associated with this password" << std::endl;
+            return;
+        }
+        // Check SHA1
+        sha1 l_sha1(l_content.data(), l_content_size);
+        for(unsigned int l_index = 0; l_index < 5; ++ l_index)
+        {
+            auto l_ptr = (uint32_t*)(l_content.data() + l_content_size + l_index * sizeof(uint32_t));
+            if(l_sha1.get_key(l_index) != *l_ptr)
+            {
+                std::cout << "No content associated with this password" << std::endl;
+                return;
+            }
+        }
+
+        std::ofstream l_content_file;
+        l_content_file.open(p_content_file_name, std::ofstream::binary);
+        if(!l_content_file.is_open())
+        {
+            throw quicky_exception::quicky_runtime_exception(R"(Unable to create file ")" + p_content_file_name + R"(")", __LINE__, __FILE__);
+        }
+        l_content_file.write((char*)l_content.data(), l_content_size);
+        l_content_file.close();
+        std::cout << R"(Content extracted in ")" << p_content_file_name << R"(")" << std::endl;
     }
 
     //-------------------------------------------------------------------------
@@ -540,7 +712,9 @@ namespace steganogif
         std::map<lib_bmp::my_color, lib_bmp::my_color> l_color_correspondance;
         while(l_colors.size())
         {
+#ifdef VERBOSE_STEGANOGIF
             std::cout << l_colors.size() << std::endl;
+#endif // VERBOSE_STEGANOGIF
             float l_min = std::numeric_limits<float>::max();
             lib_bmp::my_color l_lower_color;
             lib_bmp::my_color l_upper_color;
@@ -561,7 +735,9 @@ namespace steganogif
                 };
                 std::for_each(l_colors.begin(), l_colors.end(), l_search_min);
             }
+#ifdef VERBOSE_STEGANOGIF
             std::cout << l_upper_color << " <==> " << l_lower_color << " : " << l_min << std::endl;
+#endif // VERBOSE_STEGANOGIF
             l_color_correspondance.insert(std::make_pair(l_lower_color, l_upper_color));
             l_color_correspondance.insert(std::make_pair(l_upper_color, l_lower_color));
             l_colors.erase(l_upper_color);
@@ -697,7 +873,6 @@ namespace steganogif
             }
         }
     }
-
 
 }
 #endif // STEGANOGIF_H
