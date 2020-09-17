@@ -124,6 +124,24 @@ namespace steganogif
         inline static
         std::vector<std::pair<unsigned int, unsigned int>> generate_pixel_list(const lib_bmp::my_bmp & );
 
+
+        inline
+        void encode_picture( lib_bmp::my_bmp & p_bmp
+                           , std::vector<uint8_t> & p_content
+                           , std::vector<std::pair<unsigned int, unsigned int>> & p_pixels
+                           , const std::map<lib_bmp::my_color, lib_bmp::my_color> & p_color_correspondance
+                           , std::mt19937 & p_generator
+                           , const uint64_t & p_offset
+                           );
+
+        inline
+        void decode_picture( lib_bmp::my_bmp & p_bmp
+                           , std::vector<uint8_t> & p_content
+                           , std::vector<std::pair<unsigned int, unsigned int>> & p_pixels
+                           , const std::map<lib_bmp::my_color, lib_bmp::my_color> & p_color_correspondance
+                           , std::mt19937 & p_generator
+                           );
+
         inline
         std::map<lib_bmp::my_color, lib_bmp::my_color>
         compute_simplified_colors( const lib_bmp::my_bmp & p_bmp);
@@ -612,6 +630,74 @@ namespace steganogif
         }
         return l_pixels;
     }
+
+    //-------------------------------------------------------------------------
+    void
+    steganogif::encode_picture( lib_bmp::my_bmp & p_bmp
+                              , std::vector<uint8_t> & p_content
+                              , std::vector<std::pair<unsigned int, unsigned int>> & p_pixels
+                              , const std::map<lib_bmp::my_color, lib_bmp::my_color> & p_color_correspondance
+                              , std::mt19937 & p_generator
+                              , const uint64_t & p_offset
+                              )
+    {
+        unsigned int l_remaining_pixel_index = p_bmp.get_width() * p_bmp.get_height();
+        std::mt19937 l_data_generator{(unsigned int)std::chrono::system_clock::now().time_since_epoch().count()};
+        if(!l_remaining_pixel_index)
+        {
+            throw quicky_exception::quicky_logic_exception("Pixel index start at zero", __LINE__, __FILE__);
+        }
+        for(unsigned int l_pixel_index = 0; l_remaining_pixel_index; ++l_pixel_index, --l_remaining_pixel_index)
+        {
+            unsigned int l_swap_index = l_pixel_index + (p_generator() % l_remaining_pixel_index);
+            std::swap(p_pixels[l_pixel_index], p_pixels[l_swap_index]);
+            unsigned int l_byte_index = p_offset + l_pixel_index / 8;
+            bool l_data;
+            if(l_byte_index < p_content.size())
+            {
+                unsigned int l_bit_index = l_pixel_index % 8;
+                l_data = (p_content[l_byte_index] & (1u << l_bit_index));
+            }
+            else
+            {
+                l_data = l_data_generator() % 2;
+            }
+            bool l_swap = p_generator() % 2;
+            encode_pixel(p_pixels[l_pixel_index].first, p_pixels[l_pixel_index].second, l_data, l_swap, p_color_correspondance, p_bmp);
+        }
+    }
+
+    //-------------------------------------------------------------------------
+    void
+    steganogif::decode_picture( lib_bmp::my_bmp & p_bmp
+            , std::vector<uint8_t> & p_content
+            , std::vector<std::pair<unsigned int, unsigned int>> & p_pixels
+            , const std::map<lib_bmp::my_color, lib_bmp::my_color> & p_color_correspondance
+            , std::mt19937 & p_generator
+                              )
+    {
+        unsigned int l_remaining_pixel_index = p_bmp.get_width() * p_bmp.get_height();
+        if(!l_remaining_pixel_index)
+        {
+            throw quicky_exception::quicky_logic_exception("Pixel index start at zero", __LINE__, __FILE__);
+        }
+        uint8_t l_byte = 0;
+        for(unsigned int l_pixel_index = 0; l_remaining_pixel_index; ++l_pixel_index, --l_remaining_pixel_index)
+        {
+            unsigned int l_swap_index = l_pixel_index + (p_generator() % l_remaining_pixel_index);
+            std::swap(p_pixels[l_pixel_index], p_pixels[l_swap_index]);
+            unsigned int l_bit_index = l_pixel_index % 8;
+            bool l_swap = p_generator() % 2;
+            bool l_data = decode_pixel(p_pixels[l_pixel_index].first, p_pixels[l_pixel_index].second, l_swap, p_color_correspondance, p_bmp);
+            l_byte |= ((unsigned int) l_data) << l_bit_index;
+            if(7 == l_bit_index)
+            {
+                p_content.emplace_back(l_byte);
+                l_byte = 0;
+            }
+        }
+    }
+
 
 }
 #endif // STEGANOGIF_H
