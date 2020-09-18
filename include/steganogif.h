@@ -25,6 +25,9 @@
 #include "splittable_list.h"
 #include "splitted_list.h"
 #include "stegano_header.h"
+#include "gif_streamer.h"
+#include "gif.h"
+#include "gif_graphic_block.h"
 #include <string>
 #include <chrono>
 #include <random>
@@ -92,6 +95,18 @@ namespace steganogif
         inline static
         std::map<lib_bmp::my_color, lib_bmp::my_color>
         compute_color_correspondance(const std::set<lib_bmp::my_color> & p_colors);
+
+        /**
+         * Compute color correspondance and apply GIF palette to BMP file
+         * @param p_colors GIF color table
+         * @param p_bmp BMP content
+         * @return color correspondance
+         */
+        inline static
+        std::map<lib_bmp::my_color, lib_bmp::my_color>
+        compute_color_correspondance( const lib_gif::gif_color_table & p_colors
+                                    , lib_bmp::my_bmp & p_bmp
+                                    );
 
         /**
          * Encode data in a pixel information
@@ -174,6 +189,14 @@ namespace steganogif
                                  , const std::map<int, unsigned int> & p_u_colors
                                  , const std::map<int, unsigned int> & p_v_colors
                                  );
+
+        /**
+         * Convert GIF color to BMP color
+         * @param p_color GIF color
+         * @return BMP color
+         */
+        inline static
+        lib_bmp::my_color to_bmp_color(const lib_gif::gif_color & p_color);
 
         /**
          * Compute geometric distance between 2 colors
@@ -329,13 +352,28 @@ namespace steganogif
         std::vector<std::pair<unsigned int, unsigned int>> l_pixels = generate_pixel_list(*l_work_bmp);
         uint64_t l_offset = 0;
         std::mt19937 l_generator{*m_seed};
+
+        std::ofstream l_output_gif;
+        std::string l_output_file_name{"output.gif"};
+        l_output_gif.open(l_output_file_name, std::ofstream::binary);
+        if(!l_output_gif.is_open())
+        {
+            throw quicky_exception::quicky_runtime_exception(R"(Unable to create file ")" + l_output_file_name + R"(")", __LINE__, __FILE__);
+        }
+
+        gif_streamer::gif_streamer l_gif_streamer{l_output_gif, l_work_bmp->get_width(), l_work_bmp->get_height()};
         for(unsigned int l_frame_index = 0; l_frame_index < l_frame_number; ++l_frame_index)
         {
             std::cout << "Encode picture " << l_frame_index << std::endl;
             encode_picture(*l_work_bmp, l_content, l_pixels, l_color_correspondance, l_generator, l_offset);
-            l_work_bmp->save(std::to_string(l_frame_index) + ".bmp");
+            std::string l_bmp_name = std::to_string(l_frame_index) + ".bmp";
+            l_work_bmp->save(l_bmp_name);
+            l_gif_streamer.send_bmp(l_bmp_name);
             l_offset += l_bits_per_picture / 8;
         }
+
+        l_gif_streamer.send_trailer();
+        l_output_gif.close();
 
         if(l_work_bmp != &l_bmp)
         {
@@ -349,60 +387,205 @@ namespace steganogif
                       , const std::string & p_content_file_name
                       )
     {
-        lib_bmp::my_bmp l_bmp("0.bmp");
-        unsigned int l_bits_per_picture = l_bmp.get_height() * l_bmp.get_width();
+        std::ifstream l_gif_file;
+        l_gif_file.open(p_transport_file_name.c_str(),std::ifstream::binary);
+        if(!l_gif_file.is_open())
+        {
+            throw quicky_exception::quicky_runtime_exception(R"(Unable to read file ")" + p_transport_file_name + R"(")", __LINE__, __FILE__);
+        }
+
+        lib_gif::gif l_gif(l_gif_file);
+
+        l_gif_file.close();
+
+        unsigned int l_bits_per_picture = l_gif.get_height() * l_gif.get_width();
         if(l_bits_per_picture % 8)
         {
             throw quicky_exception::quicky_logic_exception("Number of pixels in picture should be a multiple of 8", __LINE__, __FILE__);
         }
-
-        unsigned int l_frame_number = 2;
         std::cout << "Content size per picture : " << l_bits_per_picture << " bits" << std::endl;
-        std::cout << "Number of picture : " << l_frame_number << std::endl;
 
-        // Get all colors duplicated colors in palette
-        std::set<lib_bmp::my_color> l_colors;
-        for (unsigned int l_index = 0; l_index < l_bmp.get_palette().get_size(); ++l_index)
-        {
-            l_colors.insert(l_bmp.get_palette().get_color(l_index));
-        }
-        if(l_colors.size() % 2)
-        {
-            throw quicky_exception::quicky_logic_exception("Number of color is not odd", __LINE__, __FILE__);
-        }
-        std::map<lib_bmp::my_color, lib_bmp::my_color> l_color_correspondance = compute_color_correspondance(l_colors);
+        lib_bmp::my_bmp l_bmp(l_gif.get_width(), l_gif.get_height(), 8);
 
+        // Get global palette from GIF
+        std::map<lib_bmp::my_color, lib_bmp::my_color> l_color_correspondance;
+        lib_gif::gif_color_table const * l_color_table = nullptr;
+        if(l_gif.get_global_color_table_flag())
+        {
+            l_color_table = & l_gif.get_global_color_table();
+
+            l_color_correspondance = compute_color_correspondance(*l_color_table, l_bmp);
+
+            // Set background
+            lib_gif::gif_color l_color = (*l_color_table)[l_gif.get_background_index()];
+            lib_bmp::my_color l_bmp_color = to_bmp_color(l_color);
+            for(unsigned int l_y = 0 ; l_y < l_gif.get_height() ; ++l_y)
+            {
+                for(unsigned int l_x = 0 ; l_x < l_gif.get_width() ; ++l_x)
+                {
+                    l_bmp.set_pixel_color(l_x,l_y,lib_bmp::my_color_alpha(l_bmp_color));
+                }
+            }
+
+        }
+
+        unsigned int l_frame_index = 0;
         std::vector<uint8_t> l_content;
         std::mt19937 l_generator{*m_seed};
         std::vector<std::pair<unsigned int, unsigned int>> l_pixels = generate_pixel_list(l_bmp);
-        std::cout << "Decode picture 0" << std::endl;
-        decode_picture(l_bmp, l_content, l_pixels, l_color_correspondance, l_generator);
         unsigned int l_content_size = 0;
+
+        const lib_gif::gif_graphic_control_extension * l_control_extension = nullptr;
+        for(unsigned int l_index = 0 ; l_index < l_gif.get_nb_data_block(); ++l_index)
+        {
+            const lib_gif::gif_data_block & l_data_block = l_gif.get_data_block(l_index);
+            switch (l_data_block.get_type())
+            {
+                case lib_gif::gif_data_block::t_gif_data_block_type::GRAPHICAL_CONTROL_EXTENSION:
+                    l_control_extension = dynamic_cast<const lib_gif::gif_graphic_control_extension*>(&l_data_block);
+                    break;
+                case lib_gif::gif_data_block::t_gif_data_block_type::COMMENT_EXTENSION:
+                case lib_gif::gif_data_block::t_gif_data_block_type::APPLICATION_EXTENSION:
+                    break;
+                case lib_gif::gif_data_block::t_gif_data_block_type::GRAPHIC_BLOCK:
+                {
+                    const lib_gif::gif_graphic_block & l_graphic_block = * dynamic_cast<const lib_gif::gif_graphic_block*>(&l_data_block);
+                    const unsigned int l_left_position = l_graphic_block.get_left_position();
+                    const unsigned int l_top_position = l_graphic_block.get_top_position();
+                    const unsigned int l_width = l_graphic_block.get_width();
+                    const unsigned int l_height = l_graphic_block.get_height();
+
+                    std::string l_error;
+                    if(l_width + l_left_position > l_gif.get_width())
+                    {
+                        l_error = "Max x coordinate " + std::to_string(l_width + l_left_position) + " is greater than width " + std::to_string(l_gif.get_width());
+                    }
+                    if(l_height + l_top_position > l_gif.get_height())
+                    {
+                        l_error = "Max y coordinate " + std::to_string(l_height + l_top_position) + " is greater than height " + std::to_string(l_gif.get_height());
+                    }
+                    if(!l_error.empty())
+                    {
+                        throw quicky_exception::quicky_logic_exception(l_error,__LINE__,__FILE__);
+                    }
+
+                    lib_bmp::my_bmp * l_saved_rectangle = nullptr;
+                    if(l_control_extension && 3 == l_control_extension->get_disposal_method())
+                    {
+                        l_saved_rectangle = new lib_bmp::my_bmp(l_width, l_height, 8);
+                        for(unsigned int l_y = 0; l_y < l_height; ++l_y)
+                        {
+                            for(unsigned int l_x = 0; l_x < l_width; ++l_x)
+                            {
+                                l_saved_rectangle->set_pixel_color(l_x, l_y, l_bmp.get_pixel_color(l_x + l_left_position, l_y + l_top_position));
+                            }
+                        }
+                    }
+
+                    if(l_graphic_block.is_image())
+                    {
+                        const lib_gif::gif_image & l_image = l_graphic_block.get_image();
+                        lib_gif::gif_color_table const * l_saved_color_table = l_color_table;
+                        if(l_image.get_local_color_table_flag())
+                        {
+                            l_color_table = & l_image.get_local_color_table();
+                            l_color_correspondance = compute_color_correspondance(*l_color_table, l_bmp);
+                        }
+                        if(!l_color_table)
+                        {
+                            throw quicky_exception::quicky_logic_exception("No colour table available",__LINE__,__FILE__);
+                        }
+
+                        for(unsigned int l_y = 0 ; l_y < l_height ; ++l_y)
+                        {
+                            unsigned int l_computed_y = !l_image.get_interlace_flag() ? l_y : l_image.deinterlace(l_y);
+                            for(unsigned int l_x = 0 ; l_x < l_width ; ++l_x)
+                            {
+                                if(!l_control_extension || !l_control_extension->get_transparent_color_flag() || l_control_extension->get_transparent_color_index() != l_image.get_color_index(l_x,l_y))
+                                {
+                                    lib_gif::gif_color l_color = (*l_color_table)[l_image.get_color_index(l_x,l_computed_y)];
+                                    lib_bmp::my_color l_bmp_color = to_bmp_color(l_color);
+                                    l_bmp.set_pixel_color(l_left_position + l_x,l_top_position + l_y,lib_bmp::my_color_alpha(l_bmp_color));
+                                }
+                            }
+                        }
+                        std::cout << "Decode picture " << std::to_string(l_frame_index) << std::endl;
+                        decode_picture(l_bmp, l_content, l_pixels, l_color_correspondance, l_generator);
+
+                        if(!l_frame_index)
+                        {
+                            stegano_header l_header{l_content};
+                            l_content_size = l_header.get_size();
+                            std::cout << "Content size : " << 8 * l_content_size << " bits" << std::endl;
+                        }
+                        l_bmp.save("decoded_" + std::to_string(l_frame_index) + ".bmp");
+                        ++l_frame_index;
+                        l_color_table = l_saved_color_table;
+                    }
+                    if(l_control_extension)
+                    {
+                        switch(l_control_extension->get_disposal_method())
+                        {
+                            case 0:
+                            case 1:
+                                break;
+                            case 2:
+                                if(l_gif.get_global_color_table_flag())
+                                {
+                                    l_color_table = & l_gif.get_global_color_table();
+                                    lib_gif::gif_color l_color = (*l_color_table)[l_gif.get_background_index()];
+                                    lib_bmp::my_color l_bmp_color = to_bmp_color(l_color);
+                                    for(unsigned int l_y = 0; l_y < l_height; ++l_y)
+                                    {
+                                        for(unsigned int l_x = 0; l_x < l_width; ++l_x)
+                                        {
+                                            l_bmp.set_pixel_color(l_x + l_left_position, l_y + l_top_position, lib_bmp::my_color_alpha(l_bmp_color));
+                                        }
+                                    }
+                                }
+                                break;
+                            case 3:
+                            {
+                                for(unsigned int l_y = 0; l_y < l_height; ++l_y)
+                                {
+                                    for(unsigned int l_x = 0; l_x < l_width; ++l_x)
+                                    {
+                                        l_bmp.set_pixel_color(l_x + l_left_position, l_y + l_top_position, l_saved_rectangle->get_pixel_color(l_x, l_y));
+                                    }
+                                }
+                                delete l_saved_rectangle;
+                                l_saved_rectangle = nullptr;
+                            }
+                                break;
+                            default:
+                                std::cout << "Unsupported disposal method : " << l_control_extension->get_disposal_method() << std::endl ;
+                        }
+                    }
+                    l_control_extension = nullptr;
+                }
+                    break;
+                case lib_gif::gif_data_block::t_gif_data_block_type::TRAILER:
+                    break;
+                default:
+                    throw quicky_exception::quicky_logic_exception("Unsupported gif_data_block type "+lib_gif::gif_data_block::type_to_string(l_data_block.get_type()),__LINE__,__FILE__);
+
+            }
+        }
+
         try
         {
-            stegano_header l_header{l_content};
-            l_content_size = l_header.get_size();
-
-            if(l_frame_number * l_bits_per_picture < 8 * l_content.size())
+            // To have number of frame
+            ++l_frame_index;
+            if(l_frame_index * l_bits_per_picture < 8 * l_content.size())
             {
                 unsigned int l_expected_frame_number = 8 * l_content_size / l_bits_per_picture + !!((8 * l_content_size) % l_bits_per_picture);
-                throw quicky_exception::quicky_logic_exception("Insufficant number of frame (" + std::to_string(l_frame_number) + " regarding number required ("+ std::to_string(l_expected_frame_number) +") according to declared content size", __LINE__, __FILE__);
+                throw quicky_exception::quicky_logic_exception("Insufficant number of frame (" + std::to_string(l_frame_index) + " regarding number required ("+ std::to_string(l_expected_frame_number) +") according to declared content size", __LINE__, __FILE__);
             }
         }
         catch(std::exception & e)
         {
             std::cout << "No content associated with this password" << std::endl;
             return;
-        }
-
-        std::cout << "Content size : " << 8 * l_content_size << " bits" << std::endl;
-
-        // Decode other pictures if needed
-        for(unsigned int l_index = 1; l_index < l_frame_number; ++l_index)
-        {
-            std::cout << "Decode picture " << l_index << std::endl;
-            lib_bmp::my_bmp l_other_bmp(std::to_string(l_index) + ".bmp");
-            decode_picture(l_other_bmp, l_content, l_pixels, l_color_correspondance, l_generator);
         }
 
         // Check if content was retrieved
@@ -872,6 +1055,43 @@ namespace steganogif
                 l_byte = 0;
             }
         }
+    }
+
+    //-------------------------------------------------------------------------
+    lib_bmp::my_color
+    steganogif::to_bmp_color(const lib_gif::gif_color & p_color)
+    {
+        return lib_bmp::my_color(p_color.get_red(), p_color.get_green(), p_color.get_blue());
+    }
+
+    //-------------------------------------------------------------------------
+    std::map<lib_bmp::my_color, lib_bmp::my_color>
+    steganogif::compute_color_correspondance( const lib_gif::gif_color_table & p_color_table
+                                            , lib_bmp::my_bmp & p_bmp
+                                            )
+    {
+        std::map<lib_bmp::my_color, lib_bmp::my_color> l_color_correspondance;
+        std::set<lib_bmp::my_color> l_colors;
+        for(unsigned int l_color_index = 0; l_color_index < p_color_table.get_size(); ++l_color_index)
+        {
+            lib_gif::gif_color l_gif_color = p_color_table[l_color_index];
+            lib_bmp::my_color l_bmp_color = to_bmp_color(l_gif_color);
+            p_bmp.get_palette().set_color(lib_bmp::my_color_alpha(l_bmp_color), l_color_index);
+            l_colors.insert(l_bmp_color);
+        }
+        for(unsigned int l_color_index = p_color_table.get_size(); l_color_index < 256; ++l_color_index)
+        {
+            lib_bmp::my_color l_bmp_color;
+            p_bmp.get_palette().set_color(lib_bmp::my_color_alpha(l_bmp_color), l_color_index);
+            l_colors.insert(l_bmp_color);
+        }
+        if(l_colors.size() % 2)
+        {
+            throw quicky_exception::quicky_logic_exception("Number of color is not odd", __LINE__, __FILE__);
+        }
+        l_color_correspondance = compute_color_correspondance(l_colors);
+
+        return l_color_correspondance;
     }
 
 }

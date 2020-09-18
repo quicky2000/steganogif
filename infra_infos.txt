@@ -1,4 +1,4 @@
-depend: sha1 lib_bmp
+depend: sha1 lib_bmp gif_streamer
 env_variables:
 CFLAGS:
 LDFLAGS:

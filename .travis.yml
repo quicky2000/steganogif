@@ -25,6 +25,7 @@ before_install:
   - git clone https://github.com/quicky2000/quicky_exception.git
   - git clone https://github.com/quicky2000/quicky_utils.git
   - git clone https://github.com/quicky2000/sha1.git
+  - git clone https://github.com/quicky2000/gif_streamer.git
   - cd quicky_tools/setup
   - . setup.sh
   - cd $MY_LOCATION
