@@ -55,12 +55,13 @@ namespace steganogif
         ~steganogif();
 
         inline
-        void encode( const std::string & p_transport_file_name
+        void encode( const std::string & p_output_file_name
                    , const std::string & p_content_file_name
+                   , const std::string & p_transport_file_name
                    );
 
         inline
-        void decode( const std::string & p_transport_file_name
+        void decode( const std::string & p_input_file_name
                    , const std::string & p_content_file_name
                    );
 
@@ -247,8 +248,9 @@ namespace steganogif
 
     //-------------------------------------------------------------------------
     void
-    steganogif::encode( const std::string & p_transport_file_name
+    steganogif::encode( const std::string & p_output_file_name
                       , const std::string & p_content_file_name
+                      , const std::string & p_transport_file_name
                       )
     {
         uint64_t l_content_size = 0;
@@ -354,11 +356,10 @@ namespace steganogif
         std::mt19937 l_generator{*m_seed};
 
         std::ofstream l_output_gif;
-        std::string l_output_file_name{"output.gif"};
-        l_output_gif.open(l_output_file_name, std::ofstream::binary);
+        l_output_gif.open(p_output_file_name, std::ofstream::binary);
         if(!l_output_gif.is_open())
         {
-            throw quicky_exception::quicky_runtime_exception(R"(Unable to create file ")" + l_output_file_name + R"(")", __LINE__, __FILE__);
+            throw quicky_exception::quicky_runtime_exception(R"(Unable to create file ")" + p_output_file_name + R"(")", __LINE__, __FILE__);
         }
 
         gif_streamer::gif_streamer l_gif_streamer{l_output_gif, l_work_bmp->get_width(), l_work_bmp->get_height()};
@@ -383,15 +384,15 @@ namespace steganogif
 
     //-------------------------------------------------------------------------
     void
-    steganogif::decode( const std::string & p_transport_file_name
+    steganogif::decode( const std::string & p_input_file_name
                       , const std::string & p_content_file_name
                       )
     {
         std::ifstream l_gif_file;
-        l_gif_file.open(p_transport_file_name.c_str(),std::ifstream::binary);
+        l_gif_file.open(p_input_file_name.c_str(), std::ifstream::binary);
         if(!l_gif_file.is_open())
         {
-            throw quicky_exception::quicky_runtime_exception(R"(Unable to read file ")" + p_transport_file_name + R"(")", __LINE__, __FILE__);
+            throw quicky_exception::quicky_runtime_exception(R"(Unable to read file ")" + p_input_file_name + R"(")", __LINE__, __FILE__);
         }
 
         lib_gif::gif l_gif(l_gif_file);
