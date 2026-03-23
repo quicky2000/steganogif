@@ -4,8 +4,6 @@ matrix:
       sudo: required
       dist: jammy
       compiler: gcc
-    - os: osx
-      osx_image: xcode10.3
 
 language: cpp
 
@@ -32,7 +30,9 @@ before_install:
   - chmod a+x repositories/quicky_tools/bin/*
 
 script:
-  - if [[ "$TRAVIS_OS_NAME" == "linux" ]]; then mkdir build; cd build; generate_makefile steganogif ; make test; fi
+  - mkdir build; cd build
+  - generate_makefile steganogif
+  - make test
   - cd $MY_LOCATION ; mkdir cmake_build ; cd cmake_build ; cmake $QUICKY_REPOSITORY/steganogif
   - make
 #EOF
